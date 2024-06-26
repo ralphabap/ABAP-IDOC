@@ -1,0 +1,201 @@
+ROTEIRO PARA DESENVOLVIMENTO DE IDOC’s
+
+ENTRADA:
+
+DESENVOLVIMENTO DO IDOC
+
+WE31:
+Criar os segmentos do seu IDOC. Após a criação, não esquecer de liberar (Processar – definir liberação).
+
+WE30:		
+Criar o tipo básico do IDOC. Definir a estrutura dos segmentos e salvar. Após isso, liberar  (Processar – definir liberação).
+
+WE81:
+Criar a mensagem lógica do IDOC.
+
+WE82:
+Amarrar a mensagem ao tipo básico de IDOC criado na WE30, informando também, a versão SAP em que o tipo básico foi criado.
+
+BD51:
+Inclui características para amarar quando criar um process code;
+
+
+SE37:
+Criar a função que irá receber os dados do IDOC e inserir na base de dados:
+
+
+CONFIGURAÇÃO ALE
+
+WE57:
+Cadastrar o módulo de função, o tipo básico, a mensagem e a direção (entrada = 1 e saída = 2).
+
+BD51:
+Cadastrar o módulo de função e o tipo de INPUT da mesma, sendo:
+	1 = Processamento em massa;
+	2 = Processamento individual;
+	3 = Processamento individual com bloqueio do IDOC no CALL TRANSACTION.
+
+WE42 (Códigos de processo de entrada)
+Selecionar Códigos de processo de entrada – Modificar, Entradas novas.
+Digite o nome do seu código de Processo, Descrição, Identificação (seu módulo de função).
+Selecionar as Opções: Processamento com serviço ALE e  Processamento através de módulo de função.
+Salvar.
+Selecionar o novo código de processo e clicar em Mensagem Lógica.
+Digite Novas Entradas e insira o nome da mensagem amarrada ao seu tipo básico de IDOC (WE81 e WE82).
+
+BD64
+Criar a visão de modelo e inserir o sistema lógico remetente e o sistema lógico amarrado ao mandante SAP com a mensagem de IDOC.
+Exemplo:
+Modelo de visão	:	ZENTIDOC
+Emissor	:	BCDEV46
+Destinatário	:	DEV46
+Mensagem	:	ZTESTEPCA
+
+Salvar e criar o protocolo de transmissão (Ambiente, Gerar protocolo de transmissão):
+Nesta tela, selecione a sua visão de modelo e o tamanho do pacote, clique em processar.
+
+O SAP irá criar os protocolos de forma correta. Você pode verificar a configuração do protocolo na transação WE20. Selecione o tipo de parceiro (Sistema Lógico), selecione o sistema lógico remetente (informado na visão de modelo) e verifique o tipo de mensagem no parâmetro de entrada com duplo-clique.
+Na tela de detalhes, você identifica o nome do Sistema Lógico, a mensagem de IDOC e o código de processo que você criou na WE42.
+
+Observações:
+
+Abaixo segue a relação do que precisamos ter previamente configurado no SAP para que as operações possam ser executadas com êxito:
+-	Definição dos Sistemas Lógicos (Sistema externo e sistema amarrado ao mandante);
+-	Destino RFC criado e configurado;
+-	Portas ALE Definidas e configuradas.
+
+
+DADOS DE EXEMPLO:
+
+Tipo básico	:	ZTESTEPCA_IDOC
+Mensagem	:	ZTESTEPCA
+Módulo de Função	:	YIDOC_ENTRADA_ZTESTEPCA
+Código de Processo	:	ZIDOCTESTEENTRADA
+
+
+FUNÇÃO UTILIZADA PARA INSERIR OS DADOS DO IDOC PARA A BASE SAP.
+
+*"-----------------------------------------------------------------
+*"*"Interface global:
+*"  IMPORTING
+*"     VALUE(INPUT_METHOD) LIKE  BDWFAP_PAR-INPUTMETHD
+*"     VALUE(MASS_PROCESSING) LIKE  BDWFAP_PAR-MASS_PROC
+*"  EXPORTING
+*"     VALUE(WORKFLOW_RESULT) LIKE  BDWF_PARAM-RESULT
+*"     VALUE(APPLICATION_VARIABLE) LIKE  BDWF_PARAM-APPL_VAR
+*"     VALUE(IN_UPDATE_TASK) LIKE  BDWFAP_PAR-UPDATETASK
+*"     VALUE(CALL_TRANSACTION_DONE) LIKE  BDWFAP_PAR-CALLTRANS
+*"  TABLES
+*"      IDOC_CONTRL STRUCTURE  EDIDC
+*"      IDOC_DATA STRUCTURE  EDIDD
+*"      IDOC_STATUS STRUCTURE  BDIDOCSTAT
+*"      RETURN_VARIABLES STRUCTURE  BDWFRETVAR
+*"      SERIALIZATION_INFO STRUCTURE  BDI_SER
+*"  EXCEPTIONS
+*"      WF_ERROR_PROCESS
+*"-----------------------------------------------------------------
+  TABLES ztestepca.
+
+  DATA: BEGIN OF ti_ztestepca OCCURS 0,
+  bukrs like ztestepca-bukrs,
+  lifnr like ztestepca-lifnr.
+  DATA: END OF ti_ztestepca.
+
+  DATA: w_flag TYPE c.
+
+  CLEAR: h_docnum, workflow_result, header_conf_no, w_flag.
+  FREE : ti_ztestepca.
+
+  LOOP AT idoc_contrl.
+    IF idoc_contrl-idoctp(9) <> 'ZTESTEPCA'.
+      MESSAGE ID 'E0' TYPE 'E' NUMBER '029'
+      WITH idoc_contrl-idoctp ' ' 'YIDOC_ENTRADA_ZTESTEPCA'
+      RAISING wf_error_process.
+    ELSE.
+      h_docnum = idoc_contrl-docnum.
+      LOOP AT idoc_data WHERE docnum EQ idoc_contrl-docnum.
+        CLEAR ti_ztestepca.
+        MOVE idoc_data-sdata TO ti_ztestepca.
+        MOVE-CORRESPONDING ti_ztestepca TO ztestepca.
+        INSERT ztestepca.
+        IF NOT sy-subrc IS INITIAL.
+          MOVE 'X' TO w_flag.
+          PERFORM informar_status_aplicacao USING sy-subrc
+                                                  idoc_data-segnum.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+  ENDLOOP.
+
+  IF w_flag IS INITIAL.
+    PERFORM informar_status_aplicacao USING ' ' ' '.
+  ENDIF.
+
+  IF h_docnum EQ space.
+    MESSAGE e770(me) RAISING wf_error_process.
+  ENDIF.
+
+ENDFUNCTION.
+
+*-----------------------------------------------------------------*
+***INCLUDE LZCCCF01 .
+*-----------------------------------------------------------------*
+FORM idoc_status_fill USING value(status)
+                            value(docnum)
+                            value(msgid)
+                            value(msgno)
+                            value(msgv1)
+                            value(msgv2)
+                            value(msgv3)
+                            value(msgv4)
+                            value(routid)
+                            value(segnum)
+                            value(segfld).
+  CLEAR idoc_status.
+  idoc_status-uname  = sy-uname.
+  idoc_status-status = status.
+  idoc_status-docnum = docnum.
+  idoc_status-msgty  = 'E'.
+  idoc_status-msgid  = msgid.
+  idoc_status-msgno  = msgno.
+  idoc_status-msgv1  = msgv1.
+  idoc_status-msgv2  = msgv2.
+  idoc_status-msgv3  = msgv3.
+  idoc_status-msgv4  = msgv4.
+  idoc_status-segnum = segnum.
+  idoc_status-segfld = segfld.
+  idoc_status-repid  = 'SAPLEINM'.
+  idoc_status-routid = routid.
+  APPEND idoc_status.
+
+ENDFORM.
+*&----------------------------------------------------------------*
+*&      Form  INFORMAR_STATUS_APLICACAO
+*&----------------------------------------------------------------*
+FORM informar_status_aplicacao USING p_erro p_segnum.
+
+  DATA: w_status(2).
+
+  IF p_erro IS INITIAL.
+    w_status = status_53.
+  ELSE.
+    w_status = status_51.
+  ENDIF.
+
+  PERFORM idoc_status_fill USING
+                  w_status   "value(status)
+                  h_docnum   "value(docnum)
+                  ' '        "value(msgid)
+                  ' '        "value(msgno)
+                  'Erro ao gravar na tabela ZTESTEPCA'  "value(msgv1)
+                  ' '        "value(msgv2)
+                  ' '        "value(msgv3)
+                  ' '        "value(msgv4)
+                  ' '        "value(routid)
+                  p_segnum   "value(segnum)
+                  ' '       ."value(segfld).
+ENDFORM.                    " INFORMAR_STATUS_APLICACAO
+
+*&-------------------------------------------------------------&*
+
+No exemplo acima, a função recebe os parâmetros e siplesmente grava os dados na tabela ZTESTEPCA. Note que, assim como podemos gravar os dados em tabela, podemos também, chamar uma BAPI de entrada, executar DIRECT-INPUT ou, até mesmo, executar um BATCH-INPUT.
